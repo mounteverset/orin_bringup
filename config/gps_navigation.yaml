@@ -1,0 +1,13 @@
+# Nav2 overrides for outdoor navigation without an occupancy map.
+# The rolling global costmap follows the robot in the GPS-localized map frame.
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      rolling_window: true
+      width: 200.0
+      height: 200.0
+      resolution: 0.10
+      track_unknown_space: false
+      static_layer:
+        enabled: false
+

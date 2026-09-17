@@ -1,0 +1,718 @@
+# One configuration file for the Orin-side stack. YAML values repeat frame and
+# topic values because the ROS 2 C parameter parser does not support aliases.
+orin_bringup:
+  ros__parameters:
+    network:
+      ros_domain_id: 6
+      rmw_implementation: rmw_cyclonedds_cpp
+      cyclonedds_config: /home/orin/cyclonedds_ethernet.xml
+      # Let cyclonedds_ethernet.xml control discovery. SUBNET makes the Jazzy
+      # Cyclone RMW inject ParticipantIndex=auto with a 32-index limit.
+      discovery_range: SYSTEM_DEFAULT
+
+    subsystems:
+      livox: true
+      ublox: true
+      f9p_heading_adapter: true
+      navsat_transform: true
+      okvis_findanything: true
+      # Default to mapless RTK navigation. SLAM Toolbox remains available via
+      # enable_slam:=true after gps_global_fusion is disabled.
+      slam_toolbox: false
+      nav2: true
+      generalist_bt_gen: true
+      # Nav2 now consumes the EKF output. Keep the base-side odom TF publisher
+      # disabled so robot_localization is the sole target/odom TF owner.
+      odom_fusion: true
+      # This second EKF fuses RTK position and is the sole target/map ->
+      # target/odom TF owner when SLAM Toolbox is disabled.
+      gps_global_fusion: true
+
+    runtime:
+      use_sim_time: false
+      respawn: true
+      respawn_delay: 2.0
+      log_level: info
+
+    frames:
+      map: target/map
+      odom: target/odom
+      base: target/base_link
+      lidar: target/livox_mount_link
+      gps: target/gps_link
+
+    topics:
+      scan: /scan
+      pointcloud: /livox/lidar
+      odom: /target/odometry/filtered
+      wheel_fusion_odom: /target/odometry/wheel_fusion
+      # The default fusion IMU is the corrected Livox MID-360 IMU output. Set
+      # imu directly to a raw Husky IMU topic if that is preferred instead.
+      livox_imu: /livox/imu
+      imu: /target/imu/livox
+      raw_gps_fix: /gps/fix
+      gps_fix: /target/gps/fix/rtk
+      ubx_nav_pvt: /gps/ubx_nav_pvt
+      # Gated course-over-ground heading generated while driving straight.
+      navsat_imu: /target/imu/f9p_heading
+      okvis_odom: /okvis/okvis_odometry
+      okvis_aligned_odom: /target/odometry/okvis_aligned
+      fused_odom: /target/odometry/fused
+      global_odom: /target/odometry/global
+      gps_odom: /target/odometry/gps
+      filtered_gps: /gps/filtered
+      fused_trail_marker: /target/odometry/fused_trail
+      map: /map
+      nav_cmd_vel: /cmd_vel_nav
+      base_cmd_vel: /target/nav/cmd_vel
+
+    # Leave disabled when robot_state_publisher on either machine already owns
+    # this transform. If enabled, replace the zero placeholder with calibration.
+    static_transforms:
+      publish_base_to_lidar: false
+      base_to_lidar_xyz_rpy: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+    livox:
+      user_config_path: /home/orin/livox_ros2_ws/src/livox_ros_driver2/config/MID360_config.json
+
+    ublox:
+      namespace: gps
+      device_serial_string: ""
+      measurement_period_ms: 200
+      enable_ntrip: false
+      ntrip_use_https: false
+      ntrip_host: localhost
+      ntrip_port: 2101
+      ntrip_mountpoint: MOUNTPOINT
+      # Set NTRIP_USERNAME and NTRIP_PASSWORD in the shell, never in this file.
+
+    okvis:
+      launch_file: /home/orin/okvis_ws/src/OKVIS2-X/okvis_ros2/launch/okvis2x_node_realsense.launch.xml
+      rsusb_library_path: /home/orin/okvis_ws/vendor/librealsense/install-rsusb/lib
+      torch_library_path: /home/orin/.local/lib/python3.12/site-packages/torch/lib
+      config_filename: /home/orin/okvis_ws/src/OKVIS2-X/config/rsD455/okvis2.yaml
+      se_config_filename: /home/orin/okvis_ws/src/OKVIS2-X/config/rsD455_kalibr/se2.yaml
+      vision_language: true
+      language_query_node: false
+      navigation_frame_id: target/odom
+      estimator_frame_id: target/okvis_odom
+      tracking_frame_id: target/rs_camera
+      publish_navigation_alignment: true
+      # Keep the estimator/robot alignment intact, but do not publish mesh
+      # triangles that cross below the navigation-frame ground plane.
+      clip_mesh_below_floor: true
+      mesh_floor_z: 0.0
+
+    slam:
+      mode: mapping
+      mapping_executable: async_slam_toolbox_node
+      localization_executable: localization_slam_toolbox_node
+
+    nav2:
+      bond_timeout: 4.0
+
+    generalist:
+      package: generalist_bringup
+      launch_file: generalist_bringup.launch.py
+      use_cli_ui: false
+      demo_mode: false
+
+    odom_fusion:
+      use_livox_imu: true
+      # Keep OKVIS out of the navigation EKF. Its private VIO frame may drift or
+      # reset, while target/odom must remain continuous for Nav2.
+      # OKVIS is still aligned separately for mesh visualization.
+      use_okvis_pose: false
+      # Initial conservative covariance for the aligned OKVIS pose measurement.
+      # Values are variances in [x, y, z, roll, pitch, yaw]. Tune from bags.
+      wheel_linear_x_variance: 0.04
+      wheel_angular_z_variance: 0.04
+      pose_variances: [0.05, 0.05, 1.0, 1.0, 1.0, 0.05]
+      tf_lookup_timeout_sec: 0.20
+      max_alignment_time_difference_sec: 0.50
+
+livox_imu_adapter:
+  ros__parameters:
+    use_sim_time: false
+    input_topic: /livox/imu
+    output_topic: /target/imu/livox
+    output_frame: target/livox_mount_link
+    acceleration_scale: 9.80665
+    gyro_variance: 0.0004
+    acceleration_variance: 0.25
+
+okvis_odom_adapter:
+  ros__parameters:
+    use_sim_time: false
+    okvis_odom_topic: /okvis/okvis_odometry
+    wheel_odom_topic: /target/odometry/filtered
+    aligned_odom_topic: /target/odometry/okvis_aligned
+    odom_frame: target/odom
+    base_frame: target/base_link
+    tracking_frame: target/rs_camera
+    tf_lookup_timeout_sec: 0.20
+    max_alignment_time_difference_sec: 0.50
+    use_input_covariance: false
+    pose_variances: [0.05, 0.05, 1.0, 1.0, 1.0, 0.05]
+
+wheel_odom_covariance_adapter:
+  ros__parameters:
+    use_sim_time: false
+    input_topic: /target/odometry/filtered
+    output_topic: /target/odometry/wheel_fusion
+    linear_x_variance: 0.04
+
+    angular_z_variance: 0.04
+fused_odom_trail_marker:
+  ros__parameters:
+    use_sim_time: false
+    input_topic: /target/odometry/fused
+    output_topic: /target/odometry/fused_trail
+    frame_id: target/odom
+    publish_frequency_hz: 100.0
+    max_points: 1000
+    min_point_spacing: 0.02
+    line_width: 0.04
+    color_r: 0.1
+    color_g: 1.0
+    color_b: 0.1
+    color_a: 0.95
+
+# Do not let float/DGNSS/autonomous fixes move the global navigation frame.
+# The raw fix remains available for diagnostics on /gps/fix.
+rtk_fix_filter:
+  ros__parameters:
+    use_sim_time: false
+    input_fix_topic: /gps/fix
+    input_pvt_topic: /gps/ubx_nav_pvt
+    output_fix_topic: /target/gps/fix/rtk
+    require_rtk_fixed: true
+    maximum_horizontal_accuracy_m: 0.25
+    maximum_pvt_age_sec: 0.50
+
+# A single-antenna F9P only observes heading while moving. Publish its course
+# as an ENU orientation after a short run of mutually consistent samples and
+# wheel/visual odometry confirms approximately straight, forward motion. Course
+# over ground is velocity-derived, so RTK/differential position is not required.
+f9p_course_heading_adapter:
+  ros__parameters:
+    use_sim_time: false
+    input_topic: /gps/ubx_nav_pvt
+    odom_topic: /target/odometry/fused
+    output_topic: /target/imu/f9p_heading
+    output_frame: target/base_link
+    minimum_ground_speed_mps: 0.40
+    minimum_forward_speed_mps: 0.20
+    maximum_abs_yaw_rate_rad_s: 0.10
+    maximum_heading_accuracy_deg: 10.0
+    maximum_heading_spread_deg: 5.0
+    maximum_horizontal_accuracy_m: 0.25
+    minimum_satellites: 8
+    required_consecutive_samples: 8
+    maximum_sample_gap_sec: 1.00
+    odometry_timeout_sec: 1.00
+    require_differential: false
+
+# Continuous local odometry fusion. The base-side TF publisher must remain
+# disabled so this EKF is the sole target/odom -> target/base_link owner.
+ekf_odom_fusion:
+  ros__parameters:
+    use_sim_time: false
+    frequency: 40.0
+    sensor_timeout: 0.25
+    two_d_mode: true
+    transform_time_offset: 0.0
+    transform_timeout: 0.10
+    print_diagnostics: true
+    debug: false
+    permit_corrected_publication: false
+    publish_acceleration: false
+    predict_to_current_time: true
+    dynamic_process_noise_covariance: true
+
+    # This EKF is the intended owner of target/odom -> target/base_link after
+    # the base-side TF publisher is disabled.
+    publish_tf: true
+    map_frame: target/map
+    odom_frame: target/odom
+    base_link_frame: target/base_link
+    world_frame: target/odom
+
+    # The existing topic is wheel odometry despite its "filtered" name. Use
+    # its forward speed and yaw rate, not its pose, to avoid duplicating pose
+    # information with OKVIS.
+    odom0: /target/odometry/wheel_fusion
+    odom0_config: [false, false, false,
+                   false, false, false,
+                   true,  false, false,
+                   false, false, true,
+                   false, false, false]
+    odom0_differential: false
+    odom0_relative: false
+    odom0_queue_size: 10
+    odom0_twist_rejection_threshold: 3.0
+
+    # Optional aligned OKVIS pose input. It is routed to an unused topic unless
+    # odom_fusion.use_okvis_pose is explicitly enabled.
+    odom1: /target/odometry/okvis_aligned
+    odom1_config: [true,  true,  false,
+                   false, false, true,
+                   false, false, false,
+                   false, false, false,
+                   false, false, false]
+    odom1_differential: false
+    odom1_relative: false
+    odom1_pose_use_child_frame: false
+    odom1_queue_size: 10
+    odom1_pose_rejection_threshold: 5.0
+
+    # Fuse only yaw angular velocity from the external robot IMU. The default
+    # is the corrected Livox MID-360 output; OKVIS separately uses the D455 IMU.
+    imu0: /target/imu/livox
+    imu0_config: [false, false, false,
+                  false, false, false,
+                  false, false, false,
+                  false, false, true,
+                  false, false, false]
+    imu0_differential: false
+    imu0_relative: false
+    imu0_queue_size: 40
+    imu0_remove_gravitational_acceleration: false
+
+# Global RTK fusion. This filter intentionally mirrors the continuous inputs
+# from the local EKF and adds the Cartesian GPS position. With world_frame set
+# to target/map, robot_localization publishes target/map -> target/odom while
+# the local EKF continues to publish the smooth target/odom -> target/base_link.
+# Never enable this TF publisher at the same time as SLAM Toolbox.
+ekf_map_fusion:
+  ros__parameters:
+    use_sim_time: false
+    frequency: 40.0
+    sensor_timeout: 0.50
+    two_d_mode: true
+    transform_time_offset: 0.0
+    transform_timeout: 0.20
+    print_diagnostics: true
+    debug: false
+    permit_corrected_publication: false
+    publish_acceleration: false
+    predict_to_current_time: true
+    dynamic_process_noise_covariance: true
+
+    publish_tf: true
+    map_frame: target/map
+    odom_frame: target/odom
+    base_link_frame: target/base_link
+    world_frame: target/map
+
+    # Use the same continuous wheel motion as the local filter. Feeding raw
+    # motion into both filters follows robot_localization's dual-EKF pattern.
+    odom0: /target/odometry/wheel_fusion
+    odom0_config: [false, false, false,
+                   false, false, false,
+                   true,  false, false,
+                   false, false, true,
+                   false, false, false]
+    odom0_differential: false
+    odom0_relative: false
+    odom0_queue_size: 10
+    odom0_twist_rejection_threshold: 3.0
+
+    # navsat_transform_node produces this position in target/map because it
+    # consumes the global EKF output. Absolute GPS must never be differential.
+    odom1: /target/odometry/gps
+    odom1_config: [true,  true,  false,
+                   false, false, false,
+                   false, false, false,
+                   false, false, false,
+                   false, false, false]
+    odom1_differential: false
+    odom1_relative: false
+    odom1_queue_size: 10
+    odom1_pose_rejection_threshold: 3.0
+
+    # Optional OKVIS pose input, controlled by odom_fusion.use_okvis_pose in
+    # the launch file. It is kept out by default so FindAnything can use OKVIS
+    # without making navigation depend on VIO continuity.
+    odom2: /target/odometry/okvis_aligned
+    odom2_config: [true,  true,  false,
+                   false, false, true,
+                   false, false, false,
+                   false, false, false,
+                   false, false, false]
+    odom2_differential: false
+    odom2_relative: false
+    odom2_pose_use_child_frame: false
+    odom2_queue_size: 10
+    odom2_pose_rejection_threshold: 5.0
+
+    imu0: /target/imu/livox
+    imu0_config: [false, false, false,
+                  false, false, false,
+                  false, false, false,
+                  false, false, true,
+                  false, false, false]
+    imu0_differential: false
+    imu0_relative: false
+    imu0_queue_size: 40
+    imu0_remove_gravitational_acceleration: false
+
+# Convert /gps/fix into odometry in the global EKF's target/map frame. Keep UTM
+# as a TF child so target/map remains the root of the robot navigation tree.
+navsat_transform_node:
+  ros__parameters:
+    use_sim_time: false
+    frequency: 10.0
+    delay: 3.0
+    transform_timeout: 0.20
+
+    # The IMU input must use ENU and provide an earth-referenced yaw. If its
+    # yaw is magnetic rather than true north, set the local declination here.
+    magnetic_declination_radians: 0.0
+    yaw_offset: 0.0
+    use_odometry_yaw: false
+
+    zero_altitude: true
+    publish_filtered_gps: true
+    broadcast_cartesian_transform: true
+    broadcast_cartesian_transform_as_parent_frame: false
+    wait_for_datum: false
+
+# Livox MID-360 driver. IP addresses remain in MID360_config.json above.
+livox_lidar_publisher:
+  ros__parameters:
+    xfer_format: 0
+    multi_topic: 0
+    data_src: 0
+    publish_freq: 10.0
+    output_data_type: 0
+    frame_id: target/livox_mount_link
+    lvx_file_path: /home/livox/livox_test.lvx
+    cmdline_input_bd_code: livox0000000001
+
+livox_pointcloud_to_laserscan:
+  ros__parameters:
+    target_frame: target/livox_mount_link
+    transform_tolerance: 0.10
+    min_height: -0.10
+    max_height: 0.10
+    # The laptop/self-occluded rear sector wraps across +/-pi. Keep the clear
+    # front sector (approximately -140 to +109 degrees) and omit those returns.
+    angle_min: -2.443460952792061
+    angle_max: 1.906772207803805
+    angle_increment: 0.017453292519943295
+    scan_time: 0.10
+    range_min: 0.20
+    range_max: 40.0
+    use_inf: true
+    inf_epsilon: 1.0
+
+# Retained optional SLAM provider. When enabled (with gps_global_fusion off),
+# SLAM Toolbox takes ownership of target/map -> target/odom.
+slam_toolbox:
+  ros__parameters:
+    use_sim_time: false
+    solver_plugin: solver_plugins::CeresSolver
+    ceres_linear_solver: SPARSE_NORMAL_CHOLESKY
+    ceres_preconditioner: SCHUR_JACOBI
+    ceres_trust_strategy: LEVENBERG_MARQUARDT
+    ceres_dogleg_type: TRADITIONAL_DOGLEG
+    ceres_loss_function: HuberLoss
+    odom_frame: target/odom
+    map_frame: target/map
+    base_frame: target/base_link
+    scan_topic: /scan
+    use_map_saver: true
+    mode: mapping
+    debug_logging: false
+    throttle_scans: 1
+    scan_queue_size: 1
+    transform_publish_period: 0.02
+    map_update_interval: 1.0
+    resolution: 0.05
+    restamp_tf: true
+    min_laser_range: 0.20
+    max_laser_range: 30.0
+    minimum_time_interval: 0.20
+    transform_timeout: 0.30
+    tf_buffer_duration: 30.0
+    stack_size_to_use: 40000000
+    enable_interactive_mode: true
+    use_scan_matching: true
+    use_scan_barycenter: true
+    minimum_travel_distance: 0.10
+    minimum_travel_heading: 0.10
+    check_min_dist_and_heading_precisely: true
+    scan_buffer_size: 10
+    scan_buffer_maximum_scan_distance: 10.0
+    link_match_minimum_response_fine: 0.10
+    link_scan_maximum_distance: 1.5
+    loop_search_maximum_distance: 3.0
+    do_loop_closing: true
+    loop_match_minimum_chain_size: 10
+    loop_match_maximum_variance_coarse: 3.0
+    loop_match_minimum_response_coarse: 0.35
+    loop_match_minimum_response_fine: 0.45
+    correlation_search_space_dimension: 0.5
+    correlation_search_space_resolution: 0.01
+    correlation_search_space_smear_deviation: 0.1
+    loop_search_space_dimension: 8.0
+    loop_search_space_resolution: 0.05
+    loop_search_space_smear_deviation: 0.03
+    distance_variance_penalty: 0.5
+    angle_variance_penalty: 1.0
+    fine_search_angle_offset: 0.00349
+    coarse_search_angle_offset: 0.349
+    coarse_angle_resolution: 0.0349
+    minimum_angle_penalty: 0.9
+    minimum_distance_penalty: 0.5
+    use_response_expansion: true
+    min_pass_through: 2
+    occupancy_threshold: 0.15
+
+controller_server:
+  ros__parameters:
+    enable_stamped_cmd_vel: false
+    use_sim_time: false
+    controller_frequency: 15.0
+    costmap_update_timeout: 0.30
+    min_x_velocity_threshold: 0.001
+    min_y_velocity_threshold: 0.5
+    min_theta_velocity_threshold: 0.001
+    failure_tolerance: 0.3
+    odom_topic: /target/odometry/fused
+    progress_checker_plugins: [progress_checker]
+    goal_checker_plugins: [goal_checker]
+    controller_plugins: [FollowPath]
+    progress_checker:
+      plugin: nav2_controller::SimpleProgressChecker
+      required_movement_radius: 0.30
+      movement_time_allowance: 10.0
+    goal_checker:
+      stateful: true
+      plugin: nav2_controller::SimpleGoalChecker
+      xy_goal_tolerance: 0.20
+      yaw_goal_tolerance: 0.20
+    FollowPath:
+      plugin: dwb_core::DWBLocalPlanner
+      debug_trajectory_details: false
+      min_vel_x: 0.0
+      min_vel_y: 0.0
+      max_vel_x: 0.40
+      max_vel_y: 0.0
+      max_vel_theta: 1.0
+      min_speed_xy: 0.0
+      max_speed_xy: 0.40
+      min_speed_theta: 0.0
+      acc_lim_x: 1.0
+      acc_lim_y: 0.0
+      acc_lim_theta: 1.5
+      decel_lim_x: -1.0
+      decel_lim_y: 0.0
+      decel_lim_theta: -1.5
+      vx_samples: 20
+      vy_samples: 1
+      vtheta_samples: 20
+      sim_time: 1.7
+      linear_granularity: 0.05
+      angular_granularity: 0.025
+      transform_tolerance: 0.50
+      xy_goal_tolerance: 0.20
+      trans_stopped_velocity: 0.10
+      short_circuit_trajectory_evaluation: true
+      stateful: true
+      critics: [RotateToGoal, Oscillation, BaseObstacle, GoalAlign, PathAlign, PathDist, GoalDist]
+      BaseObstacle.scale: 0.02
+      PathAlign.scale: 32.0
+      PathAlign.forward_point_distance: 0.1
+      GoalAlign.scale: 24.0
+      GoalAlign.forward_point_distance: 0.1
+      PathDist.scale: 32.0
+      GoalDist.scale: 24.0
+      RotateToGoal.scale: 32.0
+      RotateToGoal.slowing_factor: 5.0
+      RotateToGoal.lookahead_time: -1.0
+
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      use_sim_time: false
+      update_frequency: 10.0
+      publish_frequency: 5.0
+      global_frame: target/odom
+      robot_base_frame: target/base_link
+      rolling_window: true
+      width: 6
+      height: 6
+      resolution: 0.05
+      footprint: "[[0.50, 0.35], [0.50, -0.35], [-0.50, -0.35], [-0.50, 0.35]]"
+      footprint_padding: 0.05
+      transform_tolerance: 0.30
+      plugins: [obstacle_layer, inflation_layer]
+      obstacle_layer:
+        plugin: nav2_costmap_2d::ObstacleLayer
+        enabled: true
+        observation_sources: scan
+        scan:
+          topic: /scan
+          max_obstacle_height: 2.0
+          clearing: true
+          marking: true
+          data_type: LaserScan
+          inf_is_valid: false
+          observation_persistence: 0.20
+          raytrace_max_range: 3.5
+          raytrace_min_range: 0.20
+          obstacle_max_range: 3.0
+          obstacle_min_range: 0.20
+      inflation_layer:
+        plugin: nav2_costmap_2d::InflationLayer
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.70
+      always_send_full_costmap: true
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      use_sim_time: false
+      update_frequency: 2.0
+      publish_frequency: 1.0
+      global_frame: target/map
+      robot_base_frame: target/base_link
+      rolling_window: true
+      width: 200.0
+      height: 200.0
+      resolution: 0.10
+      footprint: "[[0.50, 0.35], [0.50, -0.35], [-0.50, -0.35], [-0.50, 0.35]]"
+      footprint_padding: 0.05
+      # There is no static occupancy grid in RTK-only mode. Treat unsensed
+      # space as traversable and use the live scan for marking and clearing.
+      track_unknown_space: false
+      transform_tolerance: 0.50
+      plugins: [static_layer, obstacle_layer, inflation_layer]
+      static_layer:
+        plugin: nav2_costmap_2d::StaticLayer
+        enabled: false
+        map_topic: /map
+        map_subscribe_transient_local: true
+        subscribe_to_updates: true
+      obstacle_layer:
+        plugin: nav2_costmap_2d::ObstacleLayer
+        enabled: true
+        observation_sources: scan
+        scan:
+          topic: /scan
+          max_obstacle_height: 2.0
+          clearing: true
+          marking: true
+          data_type: LaserScan
+          inf_is_valid: false
+          observation_persistence: 0.20
+          raytrace_max_range: 15.0
+          raytrace_min_range: 0.20
+          obstacle_max_range: 12.0
+          obstacle_min_range: 0.20
+      inflation_layer:
+        plugin: nav2_costmap_2d::InflationLayer
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.70
+      always_send_full_costmap: true
+
+planner_server:
+  ros__parameters:
+    use_sim_time: false
+    expected_planner_frequency: 5.0
+    planner_plugins: [GridBased]
+    GridBased:
+      plugin: nav2_navfn_planner::NavfnPlanner
+      tolerance: 0.2
+      use_astar: false
+      allow_unknown: true
+
+smoother_server:
+  ros__parameters:
+    use_sim_time: false
+    smoother_plugins: [simple_smoother]
+    simple_smoother:
+      plugin: nav2_smoother::SimpleSmoother
+      tolerance: 1.0e-10
+      max_its: 1000
+      do_refinement: true
+
+behavior_server:
+  ros__parameters:
+    enable_stamped_cmd_vel: false
+    use_sim_time: false
+    local_costmap_topic: local_costmap/costmap_raw
+    global_costmap_topic: global_costmap/costmap_raw
+    local_footprint_topic: local_costmap/published_footprint
+    global_footprint_topic: global_costmap/published_footprint
+    cycle_frequency: 10.0
+    behavior_plugins: [spin, backup, drive_on_heading, wait]
+    spin:
+      plugin: nav2_behaviors::Spin
+    backup:
+      plugin: nav2_behaviors::BackUp
+    drive_on_heading:
+      plugin: nav2_behaviors::DriveOnHeading
+    wait:
+      plugin: nav2_behaviors::Wait
+    local_frame: target/odom
+    global_frame: target/map
+    robot_base_frame: target/base_link
+    transform_tolerance: 0.30
+    simulate_ahead_time: 2.0
+    max_rotational_vel: 1.0
+    min_rotational_vel: 0.20
+    rotational_acc_lim: 1.5
+
+bt_navigator:
+  ros__parameters:
+    use_sim_time: false
+    global_frame: target/map
+    robot_base_frame: target/base_link
+    odom_topic: /target/odometry/fused
+    bt_loop_duration: 10
+    default_server_timeout: 20
+    wait_for_service_timeout: 1000
+    default_nav_to_pose_bt_xml: /opt/ros/jazzy/share/nav2_bt_navigator/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml
+    default_nav_through_poses_bt_xml: /opt/ros/jazzy/share/nav2_bt_navigator/behavior_trees/navigate_through_poses_w_replanning_and_recovery.xml
+    error_code_names: [compute_path_error_code, follow_path_error_code]
+    navigators: [navigate_to_pose, navigate_through_poses]
+    navigate_to_pose:
+      plugin: nav2_bt_navigator::NavigateToPoseNavigator
+    navigate_through_poses:
+      plugin: nav2_bt_navigator::NavigateThroughPosesNavigator
+
+waypoint_follower:
+  ros__parameters:
+    use_sim_time: false
+    # navsat_transform_node consumes the global EKF, so /fromLL coordinates
+    # and GPS waypoint goals are expressed directly in target/map.
+    global_frame_id: target/map
+    loop_rate: 20
+    stop_on_failure: false
+    action_server_result_timeout: 900.0
+    waypoint_task_executor_plugin: wait_at_waypoint
+    wait_at_waypoint:
+      plugin: nav2_waypoint_follower::WaitAtWaypoint
+      enabled: true
+      waypoint_pause_duration: 0
+
+# Keep Twist unstamped for the Humble Husky base. Nav2 writes /cmd_vel_nav and
+# this lifecycle node publishes to the base mux on /target/nav/cmd_vel.
+velocity_smoother:
+  ros__parameters:
+    use_sim_time: false
+    smoothing_frequency: 20.0
+    scale_velocities: false
+    feedback: OPEN_LOOP
+    max_velocity: [0.40, 0.0, 1.0]
+    min_velocity: [-0.30, 0.0, -1.0]
+    max_accel: [1.0, 0.0, 1.5]
+    max_decel: [-1.0, 0.0, -1.5]
+    odom_topic: /target/odometry/fused
+    odom_duration: 0.1
+    deadband_velocity: [0.0, 0.0, 0.0]
+    velocity_timeout: 1.0
+    enable_stamped_cmd_vel: false
